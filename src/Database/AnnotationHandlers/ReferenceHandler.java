@@ -24,10 +24,7 @@ public class ReferenceHandler implements AnnotationHandler {
         return has_primary;
     }
 
-    @Override
-    public void annotate(StringBuilder builder, Annotation self_) {
-        if (!(self_ instanceof Reference self)) throw new Error();
-
+    public void annotateReferenceLike(StringBuilder builder, Annotation self_) {
         name = builder.toString();
         int end = name.indexOf(' ');
         name = name.substring(0, end);
@@ -37,6 +34,24 @@ public class ReferenceHandler implements AnnotationHandler {
         builder.append("_key");
         builder.append(" ");
         builder.append("Integer");
+    }
+
+    public void lateAnnotateReferenceLike(StringBuilder builder, Class<?> class_) {
+        String class_name = class_.getSimpleName();
+        builder.append("foreign key")
+                .append(" (")
+                .append(name)
+                .append("_key) references ")
+                .append(class_name)
+                .append(" (")
+                .append(name)
+                .append("_key)");
+    }
+
+    @Override
+    public void annotate(StringBuilder builder, Annotation self_) {
+        if (!(self_ instanceof Reference self)) throw new Error();
+        annotateReferenceLike(builder, self_);
     }
 
     @Override
@@ -53,14 +68,7 @@ public class ReferenceHandler implements AnnotationHandler {
             throw new Error(text);
         }
 
-        String class_name = class_.getSimpleName();
-        builder.append("foreign key")
-                .append(" (")
-                .append(name)
-                .append("_key) references ")
-                .append(class_name)
-                .append(" (")
-                .append(name)
-                .append("_key)");
+        lateAnnotateReferenceLike(builder, class_);
+
     }
 }

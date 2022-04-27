@@ -56,12 +56,13 @@ public class DataBase {
         return table.select(this);
     }
 
-    /// selects a single 'item' with the *id*
-    public<T> T selectWithID(Class<T> class_, Integer id) {
-        DataBaseTable<T> table = this.find(class_);
-        if (table == null) return null;
+    public<T> void update(T object, HashMap<Class<?>, Integer> refs) {
+        DataBaseTable<T> table = find(object.getClass());
+        if (table == null) throw new Error("No table with that type!");
 
-        return table.selectWithID(this, id);
+        try {
+            execute(table.update(object, refs) + ";");
+        } catch (IllegalAccessException ignored) {}
     }
     /*
     public <T>

@@ -1,7 +1,6 @@
 package Database;
 
-import Database.Annotations.PrimaryKey;
-import Database.Annotations.Reference;
+import Database.Annotations.*;
 
 import java.io.InvalidClassException;
 import java.lang.annotation.Annotation;
@@ -39,6 +38,49 @@ public class DataBaseTable<T> {
         String header = "create table if not exists ";
         StringBuilder statement = new StringBuilder(header + class_.getSimpleName() + "(\n");
         List<Field> fields = List.of(class_.getDeclaredFields());
+        if (isTableArray()) {
+            Pair<Field, Field> arr = getArrayKeyAndValue(class_);
+            statement.append("    ");
+            statement.append(createField(arr.first, getFieldAnnotations(arr.first)));
+            statement.append(",\n");
+
+            List<FieldAnnotation> annotations = getFieldAnnotations(arr.second);
+            FieldAnnotation value_annotation = null;
+            for (FieldAnnotation annotation: annotations) {
+                if (annotation.annotation instanceof Value) {
+                    value_annotation = annotation;
+                    break;
+                }
+            }
+            assert value_annotation != null;
+
+            StringBuilder arr_builder = new StringBuilder();
+            arr_builder.append(getFieldName(arr.second));
+            String name = arr_builder.toString();
+
+            arr_builder.append("_key");
+            arr_builder.append(" ");
+            arr_builder.append("Integer,\n");
+
+            Class<?> class_ = arr.second.getType();
+            String class_name = class_.getSimpleName();
+            arr_builder.append("    ");
+            arr_builder.append("foreign key")
+                    .append(" (")
+                    .append(name)
+                    .append("_key) references ")
+                    .append(class_name)
+                    .append(" (")
+                    .append(name)
+                    .append("_key)");
+            statement.append("    ");
+            statement.append(arr_builder);
+
+            statement.append('\n');
+            statement.append(')');
+            return statement.toString();
+        }
+
 
         ArrayList<FieldAnnotation> all_annotations = new ArrayList<>();
         for (Field f : fields) {
@@ -90,7 +132,7 @@ public class DataBaseTable<T> {
         List<Field> fields = List.of(class_.getDeclaredFields());
 
         for (Field f : fields) {
-            if (isReference(f))
+            if (isReference(f) || isArrayValue(f) || isArray(f))
                  builder.append(getFieldName(f)).append("_key");
             else builder.append(getFieldName(f));
             if (fields.indexOf(f) != fields.size() - 1)
@@ -101,9 +143,19 @@ public class DataBaseTable<T> {
 
         builder.append(") values (");
         for (Field f : fields) {
-            if (isReference(f)) {
+            if (isReference(f) || isArrayValue(f)) {
                 Integer id = references.get(f.getType());
                 assert id != null;
+
+                builder.append(id);
+                if (fields.indexOf(f) != fields.size() - 1)
+                    builder.append(", ");
+                continue;
+            }
+            else if (isArray(f)) {
+                FieldAnnotation arr = getArrayAnnotation(f);
+                Database.Annotations.Array annotation = (Database.Annotations.Array)arr.annotation;
+                Integer id = references.get(annotation.value());
 
                 builder.append(id);
                 if (fields.indexOf(f) != fields.size() - 1)
@@ -154,14 +206,13 @@ public class DataBaseTable<T> {
         for (Field f : fields) {
             FieldAnnotation annotation;
             if ((annotation = getReferenceAnnotation(f)) != null) {
-                builder.insert(offset, '(');
                 if (!has_reference)
                     builder.append(class_.getSimpleName());
                 builder.append(queryAppendReference(annotation, f));
-                builder.append(')');
                 has_reference = true;
             }
         }
+
         if (!has_reference)
             builder.append(class_.getSimpleName());
         ResultSet rs = db.query(builder.toString());
@@ -188,101 +239,125 @@ public class DataBaseTable<T> {
         return list;
     }
 
-
-    public ArrayList<T> selectAllWithID(DataBase db, Integer id) {
+    public String update(T object, Map<Class<?>, Integer> references) throws IllegalAccessException {
+        // update Course set course_expected_student_count = 120 where course_id = 1
         StringBuilder builder = new StringBuilder();
-        Field id_field = getID(class_);
-        builder.append("select")
-                .append("*")
-                .append(" from ");
 
+        builder.append("update ");
+        builder.append(class_.getSimpleName());
+        builder.append(" set ");
 
-               /*
-                .append(class_.getSimpleName())
-                .append(" where ")
-                .append(getFieldName(id_field))
-                .append("=")
-                .append(id)
-                .append(';');
-                */
-
-        int offset = builder.length() - 1;
-        List<Field> fields = List.of(class_.getDeclaredFields());
-        for (Field f : fields) {
-            FieldAnnotation annotation;
-            if ((annotation = getReferenceAnnotation(f)) != null) {
-                builder.insert(offset, '(');
-                builder.append(queryAppendReference(annotation, f));
-                builder.append(')');
-            }
-        }
-
-        ArrayList<T> list = new ArrayList<>();
-        ResultSet rs = db.query(builder.toString());
-        try {
-            while (rs.next()) {
-                Constructor<T> constructor = class_.getConstructor();
-                constructor.setAccessible(true);
-                T value = constructor.newInstance();
-
-                for (Field f : fields) {
-                    handleFieldValue(db, rs, value, f);
-                }
-
-                list.add(value);
-            }
-        } catch (SQLException | NoSuchMethodException | IllegalAccessException | InstantiationException | InvocationTargetException e) {
-            System.out.println(e.getMessage());
-            e.printStackTrace();
-        }
-        return list;
-    }
-
-    public T selectWithID(DataBase db, Integer id) {
-        StringBuilder builder = new StringBuilder();
-        Field id_field = getID(class_);
-        builder.append("select")
-                .append("*")
-                .append(" from ")
-                .append(class_.getSimpleName())
-                .append(" where ")
-                .append(getFieldName(id_field))
-                .append("=")
-                .append(id)
-                .append(';');
-
-        ResultSet rs = db.query(builder.toString());
-        try {
-            Constructor<T> constructor = class_.getConstructor();
-            constructor.setAccessible(true);
-            T value = constructor.newInstance();
-
-            List<Field> fields = List.of(class_.getDeclaredFields());
-            for (Field f : fields) {
-                handleFieldValue(db, rs, value, f);
+        Field id_field = null;
+        Field[] fields = class_.getDeclaredFields();
+        for (Field field: fields) {
+            if (isID(field)) {
+                id_field = field;
+                continue;
             }
 
-            return value;
-        } catch (SQLException | NoSuchMethodException | IllegalAccessException | InstantiationException | InvocationTargetException e) {
-            System.out.println(e.getMessage());
-            e.printStackTrace();
+            FieldAnnotation annotation = null;
+            if ((annotation = getReferenceAnnotation(field)) != null) {
+                Reference ref = (Reference)annotation.annotation;
+
+                builder.append(getFieldName(field));
+                builder.append(" = ");
+
+                Integer value = references.get(ref.value());
+                builder.append(value);
+                if (field != fields[fields.length - 1])
+                    builder.append(',');
+                continue;
+            }
+            else if ((annotation = getArrayAnnotation(field)) != null) {
+                Array ref = (Array)annotation.annotation;
+
+                builder.append(getFieldName(field));
+                builder.append(" = ");
+
+                Integer value = references.get(ref.value());
+                builder.append(value);
+                if (field != fields[fields.length - 1])
+                    builder.append(',');
+                continue;
+            }
+
+            field.setAccessible(true);
+            Object o = field.get(object);
+
+            builder.append(getFieldName(field));
+            builder.append(" = ");
+            if (o instanceof String s)
+                 builder.append("'").append(o).append("'");
+            else builder.append(o);
+            if (field != fields[fields.length - 1])
+                builder.append(", ");
         }
-        return null;
+
+        if (id_field != null) {
+            builder.append(" where ");
+            builder.append(getFieldName(id_field));
+            builder.append(" == ");
+
+            id_field.setAccessible(true);
+            Object o = id_field.get(object);
+
+            builder.append(o);
+        }
+
+        return builder.toString();
     }
 
     String queryAppendReference(FieldAnnotation reference, Field f) {
+        return queryAppendReference(class_, reference, f);
+    }
+
+    String queryAppendReference(Class<?> class_, FieldAnnotation reference, Field f) {
         if (!(reference.annotation instanceof Reference ref)) throw new Error("wrong value passed into function");
         Class<?> ref_class = ref.value();
-        StringBuilder builder = new StringBuilder(" inner join ");
+
+        StringBuilder builder = new StringBuilder();
+        Field[] fields = ref_class.getDeclaredFields();
+        for (Field ref_f: fields) {
+            FieldAnnotation annotation;
+            if ((annotation = getReferenceAnnotation(ref_f)) != null) {
+                String s = queryAppendReference(ref_class, annotation, ref_f);
+                builder.append(s);
+            }
+        }
+
+        builder.append(" inner join ");
         builder.append(ref_class.getSimpleName());
         builder.append(" on ");
         builder.append(class_.getSimpleName());
         builder.append('.');
-        builder.append(getFieldName(f));
+        builder.append(getFieldName(class_, f));
         builder.append("_key == ");
         builder.append(ref_class.getSimpleName());
         builder.append('.');
         builder.append(getIDString(ref.value()));
+        return builder.toString();
+    }
+
+    String queryGenerateArray(FieldAnnotation array, Field f) {
+        if (!(array.annotation instanceof Database.Annotations.Array ref)) throw new Error("wrong value passed into function");
+        Class<?> arr_class = ref.value();
+        Pair<Field, Field> array_pair = getArrayKeyAndValue(arr_class);
+
+        StringBuilder builder = new StringBuilder();
+        // select * from RoomList inner join Room on RoomList.roomlist_value_key == Room.room_id
+        builder.append("select * from ");
+        builder.append(arr_class.getSimpleName());
+        builder.append(" inner join ");
+        builder.append(array_pair.second.getType().getSimpleName());
+        builder.append(" on ");
+        builder.append(arr_class.getSimpleName());
+        builder.append('.');
+        builder.append(getFieldName(arr_class, array_pair.second));
+        builder.append("_key");
+        builder.append(" == ");
+        builder.append(f.getType().getComponentType().getSimpleName());
+        builder.append('.');
+        builder.append(getIDString(f.getType().getComponentType()));
         return builder.toString();
     }
 
@@ -304,6 +379,33 @@ public class DataBaseTable<T> {
 
             f.setAccessible(true);
             f.set(value, o);
+            return;
+        }
+        else if ((annotation = getArrayAnnotation(f)) != null) {
+            Database.Annotations.Array ref = (Database.Annotations.Array) annotation.annotation;
+            Pair<Field, Field> array = getArrayKeyAndValue(ref.value());
+            Class<?> field_type = f.getType().componentType();
+            Constructor<?> constructor = field_type.getConstructor();
+            constructor.setAccessible(true);
+
+            ArrayList<Object> list = new ArrayList<>();
+            String query = queryGenerateArray(annotation, f);
+            ResultSet array_result = db.query(query);
+
+            while (array_result.next()) {
+                Object o = constructor.newInstance();
+                for (Field ref_field : field_type.getDeclaredFields()) {
+                    handleFieldValue(db, array_result, o, ref_field, field_type);
+                }
+                list.add(field_type.cast(o));
+            }
+
+            Object arr = java.lang.reflect.Array.newInstance(field_type, list.size());
+            for (int i = 0; i < java.lang.reflect.Array.getLength(arr); i++) {
+                java.lang.reflect.Array.set(arr, i, list.get(i));
+            }
+            f.setAccessible(true);
+            f.set(value, arr);
             return;
         }
         /*
@@ -333,6 +435,35 @@ public class DataBaseTable<T> {
         return null;
     }
 
+    boolean isTableArray(Class<?> c) {
+        boolean found_key = false;
+        boolean found_value = false;
+
+        Field[] fields = c.getDeclaredFields();
+        for (Field f: fields) {
+            List<FieldAnnotation> annotations = getFieldAnnotations(f);
+            for (FieldAnnotation annotation: annotations) {
+                if (!found_key && annotation.annotation instanceof Key) {
+                    found_key = true;
+                }
+                else if (!found_value && annotation.annotation instanceof Value) {
+                    found_value = true;
+                }
+
+                if (found_key && found_value) break;
+            }
+
+            if (found_key && found_value) break;
+        }
+
+
+        return found_key && found_value;
+    }
+
+    boolean isTableArray() {
+        return isTableArray(class_);
+    }
+
     String javaTypeToSQLType(Class<?> type) throws InvalidClassException {
         if (type.isArray()) throw new InvalidClassException("arrays are not supported yet");
 
@@ -357,10 +488,66 @@ public class DataBaseTable<T> {
         }
         return null;
     }
+
+    FieldAnnotation getArrayAnnotation(Field f) {
+        List<FieldAnnotation> annotations = getFieldAnnotations(f);
+        for (FieldAnnotation annotation: annotations) {
+            if (annotation.annotation instanceof Database.Annotations.Array)
+                return annotation;
+        }
+        return null;
+    }
+
+    Pair<Field, Field> getArrayKeyAndValue(Class<?> c) {
+        Field key = null;
+        Field value = null;
+
+        Field[] fields = c.getDeclaredFields();
+        for (Field f: fields) {
+            List<FieldAnnotation> annotations = getFieldAnnotations(f);
+            for (FieldAnnotation annotation: annotations) {
+                if (key == null && annotation.annotation instanceof Key) {
+                    key = f;
+                }
+                else if (value == null && annotation.annotation instanceof Value) {
+                    value = f;
+                }
+            }
+
+            // this is a check to see if both 'key' and 'value' have been set
+            if (key != null && value != null) {
+                break;
+            }
+        }
+
+        if (key == null || value == null)
+            throw new Error("expected class " + c.getSimpleName() + " to have two members, one with @Key and the other with @Value");
+
+        return new Pair<>(key, value);
+    }
+
     boolean isReference(Field f) {
         List<FieldAnnotation> annotations = getFieldAnnotations(f);
         for (FieldAnnotation annotation: annotations) {
             if (annotation.annotation instanceof Reference)
+                return true;
+        }
+        return false;
+    }
+
+    boolean isArray(Field f) {
+        List<FieldAnnotation> annotations = getFieldAnnotations(f);
+        for (FieldAnnotation annotation: annotations) {
+            if (annotation.annotation instanceof Database.Annotations.Array)
+                return true;
+        }
+        return false;
+    }
+
+    boolean isArrayValue(Field f) {
+        List<FieldAnnotation> annotations = getFieldAnnotations(f);
+        for (FieldAnnotation annotation: annotations) {
+            if (annotation.annotation instanceof Value)
                 return true;
         }
         return false;
@@ -421,5 +608,14 @@ public class DataBaseTable<T> {
         }
 
         return db_field.toString();
+    }
+}
+
+class Pair<X, Y> {
+    public X first;
+    public Y second;
+    Pair(X a, Y b) {
+        first = a;
+        second = b;
     }
 }
