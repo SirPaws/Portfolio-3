@@ -1,4 +1,12 @@
 
+/*
+this file is from when we first began this project.
+we used this to test different features of sqlite
+that we thought we might need.
+
+please note that the actual sqlite code we used
+to create our database is located in 'setup_db.sql'
+*/
 drop table if exists Lecturer;
 create table Lecturer ( 
     lecturer_id integer primary key autoincrement not null,
