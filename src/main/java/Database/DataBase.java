@@ -37,7 +37,7 @@ public class DataBase {
         drop_on_new_table = value;
     }
     public <T> void addTable(DataBaseTable<T> table) throws InvalidClassException {
-        execute(table.dropTable() + ";");
+        if (drop_on_new_table) execute(table.dropTable() + ";");
         execute(table.createTable() + ";");
         tables.add(table);
     }
@@ -63,6 +63,20 @@ public class DataBase {
         try {
             execute(table.update(object, refs) + ";");
         } catch (IllegalAccessException ignored) {}
+    }
+
+    public<T> Integer getArrayID(T object, Class<?> array_class) {
+        DataBaseTable<T> table = find(object.getClass());
+        if (table == null) throw new Error("No table of type " + object.getClass().getSimpleName() + " exists!");
+
+        return table.getArrayID(this, object, array_class);
+    }
+
+    public<T> Integer getNextArrayID(Class<T> array_class) {
+        DataBaseTable<T> table = find(array_class);
+        if (table == null) throw new Error("No table of type " + array_class.getSimpleName() + " exists!");
+
+        return table.getNextArrayID(this);
     }
     /*
     public <T>

@@ -272,6 +272,7 @@ public class DataBaseTable<T> {
                 Array ref = (Array)annotation.annotation;
 
                 builder.append(getFieldName(field));
+                builder.append("key");
                 builder.append(" = ");
 
                 Integer value = references.get(ref.value());
@@ -562,6 +563,15 @@ public class DataBaseTable<T> {
         return false;
     }
 
+    boolean isArrayID(Field f) {
+        List<FieldAnnotation> annotations = getFieldAnnotations(f);
+        for (FieldAnnotation annotation: annotations) {
+            if (annotation.annotation instanceof Key)
+                return true;
+        }
+        return false;
+    }
+
     List<FieldAnnotation> getFieldAnnotations(Field f) {
         Annotation[] field_annotations = f.getDeclaredAnnotations();
         ArrayList<FieldAnnotation> unsorted_annotations = new ArrayList<>();
@@ -585,7 +595,7 @@ public class DataBaseTable<T> {
         begin += class_name.length() + 1;
         String name = str.substring(begin);
 
-        return (class_name + '_' + name).toLowerCase();
+        return (class_.getSimpleName() + '_' + name).toLowerCase();
     }
 
     String createField(Field f, List<FieldAnnotation> annotations) throws InvalidClassException {
@@ -608,6 +618,79 @@ public class DataBaseTable<T> {
         }
 
         return db_field.toString();
+    }
+
+    public Integer getArrayID(DataBase db, T object, Class<?> array_class) {
+        if (!isTableArray(array_class)) return null;
+
+        Field array_field = null;
+        for (Field f: class_.getDeclaredFields()) {
+            FieldAnnotation annotation = null;
+            if ((annotation = getArrayAnnotation(f)) != null) {
+                Array array = (Array)annotation.annotation;
+                if (array.value() != array_class) continue;
+
+                array_field = f;
+                break;
+            }
+        }
+
+        if (array_field == null) return null;
+
+        Field id = getID(class_);
+        id.setAccessible(true);
+        try {
+            Integer i = (Integer)id.get(object);
+            String array_key = getFieldName(array_field);
+            String s = getFieldName(id);
+            String query = "select " + array_key + "_key from " + class_.getSimpleName() + " where " + s + " == " + i;
+            ResultSet rs = db.query(query);
+            if (rs.next()) {
+                int key = rs.getInt(array_key+"_key");
+                rs.close();
+                return key;
+            }
+        } catch (IllegalAccessException|SQLException e) {
+            System.out.println(e.getMessage());
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public Integer getNextArrayID(DataBase db) {
+        if (!isTableArray()) return null;
+
+        String id = getArrayIDString(class_);
+        try {
+            // select max(lecturer_id) from Lecturer;
+            String query = "select max(" + id + ") from " + class_.getSimpleName();
+            ResultSet rs = db.query(query);
+            if (rs.next()) {
+                int key = rs.getInt("max(" + id + ")");
+                rs.close();
+                return key + 1;
+            }
+        } catch (SQLException e) {
+            System.out.println(e.getMessage());
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    private String getArrayIDString(Class<T> class_) {
+        Field f = getArrayIDField(class_);
+        return f == null ? null : getFieldName(class_, f);
+    }
+
+    private Field getArrayIDField(Class<T> class_) {
+        List<Field> fields = List.of(class_.getDeclaredFields());
+
+        for (Field f : fields) {
+            if (!isArrayID(f)) continue;
+
+            return f;
+        }
+        return null;
     }
 }
 
